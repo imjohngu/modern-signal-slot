@@ -340,13 +340,27 @@ For more detailed examples and usage scenarios, you can refer to:
   - Task queue integration
   - Thread ID tracking for debugging
 
-- `test_signal_slot.cpp`: Contains unit tests that show:
+- `test_signal_slot.cpp`: Contains unit tests that demonstrate:
   - Basic signal-slot functionality
-  - Connection type behaviors
-  - Single-shot and unique connections
-  - Connection management
-  - Disconnection scenarios
-  - Thread safety aspects
-  - Memory management cases
+  - Connection type behaviors:
+    * Auto connection: Tests behavior with/without task queue
+    * Direct connection: Verifies execution in emitting thread
+    * Queued connection: Tests asynchronous execution
+    * Blocking queued connection: Verifies blocking behavior and execution time
+  - Special connection types:
+    * Single-shot connection: Tests one-time execution and auto-disconnection
+    * Unique connection: Verifies prevention of duplicate connections
+  - Combined connection types:
+    * Tests unique + single-shot + queued combinations
+    * Verifies correct behavior when flags are combined
+  - Connection management:
+    * Manual disconnection
+    * Scoped connection lifetime
+    * Connection blocking/unblocking
+    * Disconnect all slots
+  - Thread safety aspects:
+    * Cross-thread signal emission
+    * Thread ID verification
+    * Task queue integration
 
 These files provide practical examples and test cases that can help you understand how to use the library effectively in your own projects.

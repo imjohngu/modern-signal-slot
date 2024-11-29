@@ -140,6 +140,69 @@ int main()
     auto dc = std::make_shared<DeviceController>();
     auto ui = std::make_shared<UiController>();
 
+    // Default connection examples (without specifying connection type)
+    std::cout << "\n=== Testing default connections (without connection type) ===" << std::endl;
+
+    // 1. Member function slots
+    // No parameter
+    CONNECT(dc, started, ui.get(), SLOT(UiController::onStartedDefault));
+
+    // Single parameter
+    CONNECT(dc, devicePlugged, ui.get(), SLOT(UiController::onDevicePluggedDirect));
+
+    // Multiple parameters
+    CONNECT(dc, progress, ui.get(), SLOT(UiController::onProgressQueued));
+
+    // 2. Global function slots
+    // Multiple parameters
+    CONNECT(dc, progress, globalProgressHandler);
+
+    // 3. Lambda slots
+    // No parameter
+    CONNECT(dc, started, []() {
+        std::cout << get_thread_id() << "[Default Lambda] No parameter" << std::endl;
+    });
+
+    // Single parameter
+    CONNECT(dc, error, [](const std::string& error) {
+        std::cout << get_thread_id() << "[Default Lambda] Single parameter: " << error << std::endl;
+    });
+
+    // Multiple parameters
+    CONNECT(dc, progress, [](int current, int total, const std::string& message) {
+        std::cout << get_thread_id() << "[Default Lambda] Multiple parameters: " 
+                 << current << "/" << total << " - " << message << std::endl;
+    });
+
+    // Custom type parameter
+    CONNECT(dc, frameReceived, [](const VideoFrame& frame) {
+        std::cout << get_thread_id() << "[Default Lambda] Custom type: " 
+                 << frame.width << "x" << frame.height << std::endl;
+    });
+
+    // Test default connections
+    std::cout << "\n=== Emitting signals for default connections ===" << std::endl;
+    
+    // Test no parameter signal
+    EMIT(dc->started);
+    
+    // Test single parameter signal
+    auto deviceInfo = std::make_shared<DeviceInfo>();
+    deviceInfo->deviceName = "default-device";
+    EMIT(dc->devicePlugged, deviceInfo);
+    
+    // Test multiple parameters signal
+    EMIT(dc->progress, 1, 10, "Default connection test");
+    
+    // Test error signal
+    EMIT(dc->error, "Default connection error");
+    
+    // Test custom type signal
+    VideoFrame frame{1280, 720, std::vector<uint8_t>(1280*720, 0)};
+    EMIT(dc->frameReceived, frame);
+
+    std::cout << "\n=== Default connection tests completed ===" << std::endl << std::endl;
+
     // Auto connection tests
     CONNECT(dc, started, ui.get(), SLOT(UiController::onStartedDefault),
             sigslot::connection_type::auto_connection);
@@ -236,6 +299,76 @@ int main()
 
     // Wait for tasks in queue to complete
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    std::cout << "\n=== Testing disconnection examples ===" << std::endl;
+
+    // 1. 使用连接对象手动断开
+    auto conn1 = CONNECT(dc, progress, [](int current, int total, const std::string& message) {
+        std::cout << get_thread_id() << "[Manual] Progress " << current << "/" << total << std::endl;
+    }, sigslot::connection_type::queued_connection, TQ("worker"));
+
+    EMIT(dc->progress, 0, 100, "Before disconnect");
+    conn1.disconnect();  // 手动断开连接
+    EMIT(dc->progress, 1, 100, "After disconnect");  // 这条消息不会被处理
+
+    // 2. 使用作用域连接（RAII）
+    {
+        std::cout << "\n--- Testing scoped connection ---" << std::endl;
+        sigslot::scoped_connection scoped = CONNECT(dc, error, [](const std::string& error) {
+            std::cout << get_thread_id() << "[Scoped] Error: " << error << std::endl;
+        }, sigslot::connection_type::queued_connection, TQ("worker"));
+
+        EMIT(dc->error, "Inside scope");  // 会被处理
+    }  // 离开作用域时自动断开
+    EMIT(dc->error, "Outside scope");  // 不会被处理
+
+    // 3. 使用连接阻塞/解除阻塞
+    std::cout << "\n--- Testing connection blocking ---" << std::endl;
+    auto conn2 = CONNECT(dc, progress, [](int current, int total, const std::string& message) {
+        std::cout << get_thread_id() << "[Blocked] Progress " << current << "/" << total << std::endl;
+    }, sigslot::connection_type::queued_connection, TQ("worker"));
+
+    EMIT(dc->progress, 2, 100, "Before blocking");
+    conn2.block();  // 阻塞连接
+    EMIT(dc->progress, 3, 100, "During blocking");  // 不会被处理
+    conn2.unblock();  // 解除阻塞
+    EMIT(dc->progress, 4, 100, "After unblocking");
+
+    // 4. 断开特定接收者的所有连接
+    std::cout << "\n--- Testing disconnect specific receiver ---" << std::endl;
+    auto receiver = std::make_shared<UiController>();
+    CONNECT(dc, started, receiver.get(), SLOT(UiController::onStartedDefault),
+            sigslot::connection_type::queued_connection, TQ("worker"));
+    CONNECT(dc, error, receiver.get(), SLOT(UiController::onErrorBlocking),
+            sigslot::connection_type::queued_connection, TQ("worker"));
+
+    EMIT(dc->started);  // 会被处理
+    EMIT(dc->error, "Before disconnect");  // 会被处理
+    
+    // 断开receiver的所有连接
+    dc->started.disconnect(receiver.get());
+    dc->error.disconnect(receiver.get());
+    
+    EMIT(dc->started);  // 不会被处理
+    EMIT(dc->error, "After disconnect");  // 不会被处理
+
+    // 5. 断开信号的所有连接
+    std::cout << "\n--- Testing disconnect all slots ---" << std::endl;
+    CONNECT(dc, progress, [](int current, int total, const std::string& message) {
+        std::cout << get_thread_id() << "[All1] Progress " << current << "/" << total << std::endl;
+    }, sigslot::connection_type::queued_connection, TQ("worker"));
+
+    CONNECT(dc, progress, [](int current, int total, const std::string& message) {
+        std::cout << get_thread_id() << "[All2] Progress " << current << "/" << total << std::endl;
+    }, sigslot::connection_type::queued_connection, TQ("worker"));
+
+    EMIT(dc->progress, 5, 100, "Before disconnect all");  // 两个槽都会处理
+    dc->progress.disconnect_all();  // 断开所有连接
+    EMIT(dc->progress, 6, 100, "After disconnect all");  // 没有槽会处理
+
+    // 等待所有任务完成
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::cout << "=== Disconnection tests completed ===" << std::endl;
 
     return 0;
 }

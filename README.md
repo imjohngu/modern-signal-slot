@@ -134,6 +134,18 @@ connection_type::blocking_queued_connection | connection_type::singleshot_connec
 ### Connection Management
 
 ```cpp
+// Method 0: Default connection (without specifying type and queue)
+// Member function
+CONNECT(sender, signal, receiver.get(), SLOT(Receiver::slot));
+
+// Lambda
+CONNECT(sender, signal, [](int value) {
+    std::cout << "Received value: " << value << std::endl;
+});
+
+// Global function
+CONNECT(sender, signal, globalHandler);
+
 // Method 1: Using connection object
 auto conn = CONNECT(sender, signal, receiver, SLOT(Receiver::slot),
                    connection_type::auto_connection, TQ("worker"));

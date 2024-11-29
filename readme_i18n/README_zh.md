@@ -134,22 +134,21 @@ connection_type::blocking_queued_connection | connection_type::singleshot_connec
 ### 连接管理
 
 ```cpp
+// 方法0：默认连接（不指定类型和队列）
+// 成员函数
+CONNECT(sender, signal, receiver.get(), SLOT(Receiver::slot));
+
+// Lambda表达式
+CONNECT(sender, signal, [](int value) {
+    std::cout << "收到值: " << value << std::endl;
+});
+
+// 全局函数
+CONNECT(sender, signal, globalHandler);
+
 // 方法1：使用连接对象
 auto conn = CONNECT(sender, signal, receiver, SLOT(Receiver::slot),
                    connection_type::auto_connection, TQ("worker"));
-conn.disconnect();  // 手动断开连接
-
-// 方法2：使用 DISCONNECT 宏
-DISCONNECT(sender, signal, receiver, SLOT(Receiver::slot));
-
-// 方法3：作用域连接（RAII）
-{
-    sigslot::scoped_connection conn = CONNECT(sender, signal, receiver, slot);
-    // 连接在此作用域内有效
-} // 离开作用域时自动断开连接
-
-// 方法4：断开信号的所有槽连接
-sender->signal.disconnect_all();
 ```
 
 ## 构建要求

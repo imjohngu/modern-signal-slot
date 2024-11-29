@@ -149,6 +149,19 @@ CONNECT(sender, signal, globalHandler);
 // 方法1：使用连接对象
 auto conn = CONNECT(sender, signal, receiver, SLOT(Receiver::slot),
                    connection_type::auto_connection, TQ("worker"));
+conn.disconnect();  // 手动断开连接
+
+// 方法2：使用DISCONNECT宏
+DISCONNECT(sender, signal, receiver, SLOT(Receiver::slot));
+
+// 方法3：使用作用域连接（RAII）
+{
+    sigslot::scoped_connection conn = CONNECT(sender, signal, receiver, slot);
+    // 连接在此作用域内有效
+} // 离开作用域时自动断开连接
+
+// 方法4：断开信号的所有槽连接
+sender->signal.disconnect_all();
 ```
 
 ## 构建要求

@@ -19,13 +19,13 @@ protected:
     }
 };
 
-// 测试数据结构
+// Test data structure
 struct TestData {
     int value;
     std::string message;
 };
 
-// 测试类
+// Test class
 class TestReceiver {
 public:
     void onNoParam() {
@@ -74,7 +74,7 @@ public:
     SIGNAL(customTypeSignal, const TestData&);
 };
 
-// 测试无参数信号
+// Test signal without parameters
 TEST_F(SignalSlotTest, NoParamSignal) {
     auto emitter = std::make_shared<TestEmitter>();
     auto receiver = std::make_shared<TestReceiver>();
@@ -86,7 +86,7 @@ TEST_F(SignalSlotTest, NoParamSignal) {
     EXPECT_TRUE(receiver->noParamCalled);
 }
 
-// 测试单参数信号
+// Test signal with single parameter
 TEST_F(SignalSlotTest, SingleParamSignal) {
     auto emitter = std::make_shared<TestEmitter>();
     auto receiver = std::make_shared<TestReceiver>();
@@ -99,7 +99,7 @@ TEST_F(SignalSlotTest, SingleParamSignal) {
     EXPECT_EQ(receiver->lastValue, 42);
 }
 
-// 测试多参数信号
+// Test signal with multiple parameters
 TEST_F(SignalSlotTest, MultiParamSignal) {
     auto emitter = std::make_shared<TestEmitter>();
     auto receiver = std::make_shared<TestReceiver>();
@@ -113,7 +113,7 @@ TEST_F(SignalSlotTest, MultiParamSignal) {
     EXPECT_EQ(receiver->lastMessage, "test");
 }
 
-// 测试自定义类型信号
+// Test signal with custom type
 TEST_F(SignalSlotTest, CustomTypeSignal) {
     auto emitter = std::make_shared<TestEmitter>();
     auto receiver = std::make_shared<TestReceiver>();
@@ -128,7 +128,7 @@ TEST_F(SignalSlotTest, CustomTypeSignal) {
     EXPECT_EQ(receiver->lastMessage, "test");
 }
 
-// 测试Lambda槽函数
+// Test lambda slot
 TEST_F(SignalSlotTest, LambdaSlot) {
     auto emitter = std::make_shared<TestEmitter>();
     bool lambdaCalled = false;
@@ -141,7 +141,7 @@ TEST_F(SignalSlotTest, LambdaSlot) {
     EXPECT_TRUE(lambdaCalled);
 }
 
-// 测试单次连接
+// Test single-shot connection
 TEST_F(SignalSlotTest, SingleShotConnection) {
     auto emitter = std::make_shared<TestEmitter>();
     auto receiver = std::make_shared<TestReceiver>();
@@ -158,23 +158,140 @@ TEST_F(SignalSlotTest, SingleShotConnection) {
     EXPECT_FALSE(receiver->singleParamCalled);
 }
 
-// 测试唯一连接
+// Test unique connection
 TEST_F(SignalSlotTest, UniqueConnection) {
     auto emitter = std::make_shared<TestEmitter>();
     int callCount = 0;
 
     auto slot = [&callCount](int value) { callCount++; };
 
-    // 第一次连接
+    // First connection
     CONNECT(emitter, singleParamSignal, slot,
             sigslot::connection_type::direct_connection | sigslot::connection_type::unique_connection,
             TQ("worker"));
 
-    // 尝试重复连接
+    // Try duplicate connection
     CONNECT(emitter, singleParamSignal, slot,
             sigslot::connection_type::direct_connection | sigslot::connection_type::unique_connection,
             TQ("worker"));
 
     EMIT(emitter->singleParamSignal, 42);
-    EXPECT_EQ(callCount, 1); // 应该只被调用一次
+    EXPECT_EQ(callCount, 1); // Should only be called once
+}
+
+// Test manual disconnection
+TEST_F(SignalSlotTest, ManualDisconnection) {
+    struct Sender {
+        SIGNAL(valueChanged, int);
+    };
+    
+    struct Receiver {
+        void onValueChanged(int value) { lastValue = value; }
+        int lastValue = 0;
+    };
+    
+    auto sender = std::make_shared<Sender>();
+    auto receiver = std::make_shared<Receiver>();
+    
+    auto conn = CONNECT(sender, valueChanged, receiver.get(), 
+                      SLOT(Receiver::onValueChanged),
+                      sigslot::connection_type::direct_connection,
+                      TQ("worker"));
+                      
+    EMIT(sender->valueChanged, 42);
+    EXPECT_EQ(receiver->lastValue, 42);
+    
+    conn.disconnect();
+    EMIT(sender->valueChanged, 24);
+    EXPECT_EQ(receiver->lastValue, 42);
+}
+
+// Test scoped connection
+TEST_F(SignalSlotTest, ScopedConnection) {
+    struct Sender {
+        SIGNAL(valueChanged, int);
+    };
+    
+    struct Receiver {
+        void onValueChanged(int value) { lastValue = value; }
+        int lastValue = 0;
+    };
+    
+    auto sender = std::make_shared<Sender>();
+    auto receiver = std::make_shared<Receiver>();
+    
+    {
+        sigslot::scoped_connection conn = CONNECT(sender, valueChanged, 
+            receiver.get(), SLOT(Receiver::onValueChanged),
+            sigslot::connection_type::direct_connection,
+            TQ("worker"));
+            
+        EMIT(sender->valueChanged, 42);
+        EXPECT_EQ(receiver->lastValue, 42);
+    }
+    
+    EMIT(sender->valueChanged, 24);
+    EXPECT_EQ(receiver->lastValue, 42);
+}
+
+// Test DISCONNECT macro
+TEST_F(SignalSlotTest, DisconnectMacro) {
+    struct Sender {
+        SIGNAL(valueChanged, int);
+    };
+    
+    struct Receiver {
+        void onValueChanged(int value) { lastValue = value; }
+        int lastValue = 0;
+    };
+    
+    auto sender = std::make_shared<Sender>();
+    auto receiver = std::make_shared<Receiver>();
+    
+    CONNECT(sender, valueChanged, receiver.get(), 
+           SLOT(Receiver::onValueChanged),
+           sigslot::connection_type::direct_connection,
+           TQ("worker"));
+           
+    EMIT(sender->valueChanged, 42);
+    EXPECT_EQ(receiver->lastValue, 42);
+    
+    DISCONNECT(sender, valueChanged, receiver.get(), SLOT(Receiver::onValueChanged));
+    EMIT(sender->valueChanged, 24);
+    EXPECT_EQ(receiver->lastValue, 42);
+}
+
+// Test disconnect all slots
+TEST_F(SignalSlotTest, DisconnectAll) {
+    struct Sender {
+        SIGNAL(valueChanged, int);
+    };
+    
+    struct Receiver {
+        void onValueChanged(int value) { lastValue = value; }
+        int lastValue = 0;
+    };
+    
+    auto sender = std::make_shared<Sender>();
+    auto receiver1 = std::make_shared<Receiver>();
+    auto receiver2 = std::make_shared<Receiver>();
+    
+    CONNECT(sender, valueChanged, receiver1.get(), 
+           SLOT(Receiver::onValueChanged),
+           sigslot::connection_type::direct_connection,
+           TQ("worker"));
+           
+    CONNECT(sender, valueChanged, receiver2.get(), 
+           SLOT(Receiver::onValueChanged),
+           sigslot::connection_type::direct_connection,
+           TQ("worker"));
+           
+    EMIT(sender->valueChanged, 42);
+    EXPECT_EQ(receiver1->lastValue, 42);
+    EXPECT_EQ(receiver2->lastValue, 42);
+    
+    sender->valueChanged.disconnect_all();
+    EMIT(sender->valueChanged, 24);
+    EXPECT_EQ(receiver1->lastValue, 42);
+    EXPECT_EQ(receiver2->lastValue, 42);
 } 

@@ -121,15 +121,22 @@ CONNECT(dc, error, errorHandler,
 ### Connection Management
 
 ```cpp
-// RAII connection management
-auto conn = sig.connect(slot);
-conn.disconnect(); // Manual disconnection
+// Method 1: Using connection object
+auto conn = CONNECT(sender, signal, receiver, SLOT(Receiver::slot),
+                   connection_type::auto_connection, TQ("worker"));
+conn.disconnect();  // Manual disconnection
 
-// Scoped connection
+// Method 2: Using DISCONNECT macro
+DISCONNECT(sender, signal, receiver, SLOT(Receiver::slot));
+
+// Method 3: Scoped connection (RAII)
 {
-    sigslot::scoped_connection conn = sig.connect(slot);
-    // Auto-disconnects when scope ends
-}
+    sigslot::scoped_connection conn = CONNECT(sender, signal, receiver, slot);
+    // Connection is valid within this scope
+} // Automatically disconnects when leaving scope
+
+// Method 4: Disconnect all slots from a signal
+sender->signal.disconnect_all();
 ```
 
 ## Build Requirements

@@ -158,6 +158,40 @@ int main()
     }, sigslot::connection_type::queued_connection | sigslot::connection_type::unique_connection,
     TQ("worker"));
 
+    // 12. Demonstrate different disconnection methods
+    std::cout << "\n=== Testing disconnection methods ===" << std::endl;
+    
+    // Method 1: Using connection object
+    auto conn = CONNECT(dc, progress, [](int current, int total, const std::string& message) {
+        std::cout << "This handler will be disconnected - Progress " << current << "/" << total << std::endl;
+    }, sigslot::connection_type::queued_connection, TQ("worker"));
+    
+    // Method 2: Store connection in scoped_connection
+    sigslot::scoped_connection scoped_conn = CONNECT(dc, error, [](const std::string& error) {
+        std::cout << "Scoped connection handler - Error: " << error << std::endl;
+    }, sigslot::connection_type::queued_connection, TQ("worker"));
+    
+    // Method 3: Using DISCONNECT macro
+    CONNECT(dc, started, []() {
+        std::cout << "This started handler will be disconnected" << std::endl;
+    }, sigslot::connection_type::queued_connection, TQ("worker"));
+    
+    // Demonstrate disconnections
+    conn.disconnect();  // Method 1: Manual disconnection
+    DISCONNECT(dc, started, nullptr, nullptr);  // Method 3: Disconnect all slots from 'started' signal
+    
+    {
+        // Method 2: Scoped connection will be automatically disconnected at end of scope
+        std::cout << "Entering scope" << std::endl;
+        sigslot::scoped_connection temp_conn = CONNECT(dc, devicePlugged, 
+            [](const std::shared_ptr<DeviceInfo>& info) {
+            std::cout << "Temporary handler - Device plugged: " << info->deviceName << std::endl;
+        }, sigslot::connection_type::queued_connection, TQ("worker"));
+        
+        // Do something within scope...
+        std::cout << "Leaving scope" << std::endl;
+    } // temp_conn automatically disconnects here
+
     // Execute mock operations
     dc->mockOperations();
 

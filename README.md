@@ -90,32 +90,40 @@ int main() {
 
 ### Connection Types
 
+The library supports several connection types through the `connection_type` enum:
+
 ```cpp
-// Auto connection (system decides based on thread context)
-CONNECT(dc, started, ui.get(), SLOT(UiController::onStarted),
-        sigslot::connection_type::auto_connection, TQ("worker"));
+enum connection_type {
+    auto_connection = 0,            // System automatically chooses direct or queued based on thread context
+    direct_connection = 1,          // Synchronous execution in the emitting thread
+    queued_connection = 2,          // Asynchronous execution in the target thread
+    blocking_queued_connection = 3, // Asynchronous execution but blocks until completion
+    unique_connection = 0x80,       // Ensures only one identical connection exists (can be combined with other types)
+    singleshot_connection = 0x100   // Connection automatically disconnects after first execution (can be combined with other types)
+};
+```
 
-// Direct connection (synchronous execution)
-CONNECT(dc, devicePlugged, ui.get(), SLOT(UiController::onDevicePlugged),
-        sigslot::connection_type::direct_connection, TQ("worker"));
+- `auto_connection`: The system automatically chooses between direct and queued connection based on the thread context:
+  - If the slot is in the same thread as the signal emission, uses direct connection
+  - If the slot is in a different thread, uses queued connection
 
-// Queued connection (asynchronous execution)
-CONNECT(dc, progress, ui.get(), SLOT(UiController::onProgress),
-        sigslot::connection_type::queued_connection, TQ("worker"));
+- `direct_connection`: The slot is executed synchronously in the thread that emits the signal. This is the fastest option but may block the emitting thread.
 
-// Blocking queued connection (asynchronous but waits for completion)
-CONNECT(dc, error, ui.get(), SLOT(UiController::onError),
-        sigslot::connection_type::blocking_queued_connection, TQ("worker"));
+- `queued_connection`: The slot execution is queued and will be executed asynchronously in the target thread's event loop. This is safe for cross-thread signal-slot communication.
 
-// Single-shot connection (disconnects after first execution)
-CONNECT(dc, error, errorHandler,
-        sigslot::connection_type::queued_connection | sigslot::connection_type::singleshot_connection,
-        TQ("worker"));
+- `blocking_queued_connection`: Similar to queued connection, but the signal emission blocks until the slot execution completes. Useful when you need the results of the slot execution.
 
-// Unique connection (prevents duplicate connections)
-CONNECT(dc, error, errorHandler,
-        sigslot::connection_type::queued_connection | sigslot::connection_type::unique_connection,
-        TQ("worker"));
+- `unique_connection`: Can be combined with other connection types using the OR operator (|). Ensures that the same slot is not connected multiple times to the same signal.
+
+- `singleshot_connection`: Can be combined with other connection types using the OR operator (|). The connection will automatically disconnect after the slot is executed once.
+
+Example combinations:
+```cpp
+// Unique queued connection
+connection_type::queued_connection | connection_type::unique_connection
+
+// Single-shot blocking queued connection
+connection_type::blocking_queued_connection | connection_type::singleshot_connection
 ```
 
 ### Connection Management
@@ -164,3 +172,176 @@ The library consists of several key components:
 ## Examples
 
 For more usage examples, please refer to `main.cpp` and `test_signal_slot.cpp`.
+
+### Complete Usage Guide
+
+#### Required Headers
+```cpp
+#include <iostream>
+#include <memory>
+#include <thread>
+#include "./signal-slot/signal_slot_api.hpp"
+#include "./signal-slot/core/task_queue_manager.hpp"
+```
+
+#### 1. Initialize Task Queue Manager
+```cpp
+int main() {
+    // Create a task queue named "worker"
+    TQMgr->create({"worker"});
+}
+```
+
+#### 2. Define Signal Emitter
+```cpp
+class DeviceController {
+public:
+    // Signal without parameters
+    SIGNAL(started);
+    
+    // Signal with single parameter
+    SIGNAL(devicePlugged, const std::shared_ptr<DeviceInfo>&);
+    
+    // Signal with multiple parameters
+    SIGNAL(progress, int, int, const std::string&);
+    
+    // Signal with basic type parameter
+    SIGNAL(error, const std::string&);
+    
+    // Signal with custom type parameter
+    SIGNAL(frameReceived, const VideoFrame&);
+};
+```
+
+#### 3. Define Signal Receiver
+```cpp
+class UiController {
+public:
+    // Slot without parameters
+    void onStarted() {
+        std::cout << "Device started" << std::endl;
+    }
+
+    // Slot with single parameter
+    void onDevicePlugged(const std::shared_ptr<DeviceInfo>& info) {
+        std::cout << "Device plugged - " << info->deviceName << std::endl;
+    }
+
+    // Slot with multiple parameters
+    void onProgress(int current, int total, const std::string& message) {
+        std::cout << "Progress " << current << "/" << total 
+                 << " - " << message << std::endl;
+    }
+};
+```
+
+#### 4. Connection Examples
+
+1. Basic Connection (without task queue)
+```cpp
+CONNECT(dc, started, ui.get(), SLOT(UiController::onStarted),
+        sigslot::connection_type::auto_connection);
+```
+
+2. Direct Connection with Task Queue
+```cpp
+CONNECT(dc, devicePlugged, ui.get(), SLOT(UiController::onDevicePlugged),
+        sigslot::connection_type::direct_connection, TQ("worker"));
+```
+
+3. Queued Connection
+```cpp
+CONNECT(dc, progress, ui.get(), SLOT(UiController::onProgress),
+        sigslot::connection_type::queued_connection, TQ("worker"));
+```
+
+4. Lambda Connection
+```cpp
+CONNECT(dc, frameReceived, [](const VideoFrame& frame) {
+    std::cout << "Received frame " << frame.width << "x" << frame.height << std::endl;
+}, sigslot::connection_type::queued_connection, TQ("worker"));
+```
+
+5. Single-shot Connection
+```cpp
+CONNECT(dc, error, [](const std::string& error) {
+    std::cout << "One-shot error handler - " << error << std::endl;
+}, sigslot::connection_type::queued_connection | sigslot::connection_type::singleshot_connection, 
+TQ("worker"));
+```
+
+6. Unique Connection
+```cpp
+CONNECT(dc, error, [](const std::string& error) {
+    std::cout << "Unique error handler - " << error << std::endl;
+}, sigslot::connection_type::queued_connection | sigslot::connection_type::unique_connection,
+TQ("worker"));
+```
+
+#### 5. Signal Emission
+```cpp
+// Emit signal without parameters
+EMIT(started);
+
+// Emit signal with single parameter
+auto deviceInfo = std::make_shared<DeviceInfo>();
+deviceInfo->deviceName = "microphone";
+EMIT(devicePlugged, deviceInfo);
+
+// Emit signal with multiple parameters
+EMIT(progress, 1, 3, "Processing...");
+
+// Emit signal with custom type
+VideoFrame frame{640, 480, std::vector<uint8_t>(640*480, 0)};
+EMIT(frameReceived, frame);
+```
+
+#### 6. Connection Management Examples
+
+1. Using Connection Object
+```cpp
+auto conn = CONNECT(dc, progress, [](int current, int total, const std::string& message) {
+    std::cout << "Progress " << current << "/" << total << std::endl;
+}, sigslot::connection_type::queued_connection, TQ("worker"));
+
+conn.disconnect();  // Manual disconnection
+```
+
+2. Using Scoped Connection
+```cpp
+{
+    sigslot::scoped_connection conn = CONNECT(dc, error, [](const std::string& error) {
+        std::cout << "Scoped error handler: " << error << std::endl;
+    }, sigslot::connection_type::queued_connection, TQ("worker"));
+    
+    // Connection is valid only within this scope
+} // Automatically disconnects here
+```
+
+3. Using DISCONNECT Macro
+```cpp
+DISCONNECT(dc, started, nullptr, nullptr);  // Disconnect all slots from 'started' signal
+```
+
+## More Examples
+
+For more detailed examples and usage scenarios, you can refer to:
+
+- `examples.cpp`: Demonstrates comprehensive usage including:
+  - Different connection types (direct, queued, auto, blocking)
+  - Various signal-slot patterns (member functions, lambdas, global functions)
+  - Connection management methods
+  - Thread-safe signal emission
+  - Task queue integration
+  - Thread ID tracking for debugging
+
+- `test_signal_slot.cpp`: Contains unit tests that show:
+  - Basic signal-slot functionality
+  - Connection type behaviors
+  - Single-shot and unique connections
+  - Connection management
+  - Disconnection scenarios
+  - Thread safety aspects
+  - Memory management cases
+
+These files provide practical examples and test cases that can help you understand how to use the library effectively in your own projects.

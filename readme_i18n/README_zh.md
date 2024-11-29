@@ -90,32 +90,40 @@ int main() {
 
 ### 连接类型
 
+该库通过 `connection_type` 枚举支持多种连接类型：
+
 ```cpp
-// 自动连接（系统根据线程上下文决定）
-CONNECT(dc, started, ui.get(), SLOT(UiController::onStarted),
-        sigslot::connection_type::auto_connection, TQ("worker"));
+enum connection_type {
+    auto_connection = 0,            // 系统根据线程上下文自动选择直接或队列连接
+    direct_connection = 1,          // 在发射信号的线程中同步执行
+    queued_connection = 2,          // 在目标线程中异步执行
+    blocking_queued_connection = 3, // 异步执行但阻塞等待完成
+    unique_connection = 0x80,       // 确保只存在一个相同的连接（可与其他类型组合）
+    singleshot_connection = 0x100   // 执行一次后自动断开连接（可与其他类型组合）
+};
+```
 
-// 直接连接（同步执行）
-CONNECT(dc, devicePlugged, ui.get(), SLOT(UiController::onDevicePlugged),
-        sigslot::connection_type::direct_connection, TQ("worker"));
+- `auto_connection`: 系统根据线程上下文自动选择连接类型：
+  - 如果槽函数与信号发射在同一线程，使用直接连接
+  - 如果槽函数与信号发射在不同线程，使用队列连接
 
-// 队列连接（异步执行）
-CONNECT(dc, progress, ui.get(), SLOT(UiController::onProgress),
-        sigslot::connection_type::queued_connection, TQ("worker"));
+- `direct_connection`: 在发射信号的线程中同步执行槽函数。这是最快的选项，但可能会阻塞发射线程。
 
-// 阻塞队列连接（异步但等待完成）
-CONNECT(dc, error, ui.get(), SLOT(UiController::onError),
-        sigslot::connection_type::blocking_queued_connection, TQ("worker"));
+- `queued_connection`: 槽函数的执行被加入队列，将在目标线程的事件循环中异步执行。这对于跨线程的信号槽通信是安全的。
 
-// 单次连接（执行一次后自动断开）
-CONNECT(dc, error, errorHandler,
-        sigslot::connection_type::queued_connection | sigslot::connection_type::singleshot_connection,
-        TQ("worker"));
+- `blocking_queued_connection`: 类似于队列连接，但信号发射会阻塞直到槽函数执行完成。当需要槽函数执行结果时很有用。
 
-// 唯一连接（防止重复连接）
-CONNECT(dc, error, errorHandler,
-        sigslot::connection_type::queued_connection | sigslot::connection_type::unique_connection,
-        TQ("worker"));
+- `unique_connection`: 可以使用OR运算符(|)与其他连接类型组合。确保相同的槽不会多次连接到同一个信号。
+
+- `singleshot_connection`: 可以使用OR运算符(|)与其他连接类型组合。槽函数执行一次后会自动断开连接。
+
+组合示例：
+```cpp
+// 唯一的队列连接
+connection_type::queued_connection | connection_type::unique_connection
+
+// 单次执行的阻塞队列连接
+connection_type::blocking_queued_connection | connection_type::singleshot_connection
 ```
 
 ### 连接管理
@@ -164,3 +172,176 @@ sender->signal.disconnect_all();
 ## 示例
 
 更多使用示例请参考 `main.cpp` 和 `test_signal_slot.cpp`。 
+
+### 完整使用指南
+
+#### 需要包含的头文件
+```cpp
+#include <iostream>
+#include <memory>
+#include <thread>
+#include "./signal-slot/signal_slot_api.hpp"
+#include "./signal-slot/core/task_queue_manager.hpp"
+```
+
+#### 1. 初始化任务队列管理器
+```cpp
+int main() {
+    // 创建一个名为"worker"的任务队列
+    TQMgr->create({"worker"});
+}
+```
+
+#### 2. 定义信号发送者
+```cpp
+class DeviceController {
+public:
+    // 无参数信号
+    SIGNAL(started);
+    
+    // 单参数信号
+    SIGNAL(devicePlugged, const std::shared_ptr<DeviceInfo>&);
+    
+    // 多参数信号
+    SIGNAL(progress, int, int, const std::string&);
+    
+    // 基本类型参数信号
+    SIGNAL(error, const std::string&);
+    
+    // 自定义类型参数信号
+    SIGNAL(frameReceived, const VideoFrame&);
+};
+```
+
+#### 3. 定义信号接收者
+```cpp
+class UiController {
+public:
+    // 无参数槽函数
+    void onStarted() {
+        std::cout << "设备已启动" << std::endl;
+    }
+
+    // 单参数槽函数
+    void onDevicePlugged(const std::shared_ptr<DeviceInfo>& info) {
+        std::cout << "设备已插入 - " << info->deviceName << std::endl;
+    }
+
+    // 多参数槽函数
+    void onProgress(int current, int total, const std::string& message) {
+        std::cout << "进度 " << current << "/" << total 
+                 << " - " << message << std::endl;
+    }
+};
+```
+
+#### 4. 连接示例
+
+1. 基本连接（不使用任务队列）
+```cpp
+CONNECT(dc, started, ui.get(), SLOT(UiController::onStarted),
+        sigslot::connection_type::auto_connection);
+```
+
+2. 带任务队列的直接连接
+```cpp
+CONNECT(dc, devicePlugged, ui.get(), SLOT(UiController::onDevicePlugged),
+        sigslot::connection_type::direct_connection, TQ("worker"));
+```
+
+3. 队列连接
+```cpp
+CONNECT(dc, progress, ui.get(), SLOT(UiController::onProgress),
+        sigslot::connection_type::queued_connection, TQ("worker"));
+```
+
+4. Lambda连接
+```cpp
+CONNECT(dc, frameReceived, [](const VideoFrame& frame) {
+    std::cout << "收到帧 " << frame.width << "x" << frame.height << std::endl;
+}, sigslot::connection_type::queued_connection, TQ("worker"));
+```
+
+5. 单次连接
+```cpp
+CONNECT(dc, error, [](const std::string& error) {
+    std::cout << "单次错误处理器 - " << error << std::endl;
+}, sigslot::connection_type::queued_connection | sigslot::connection_type::singleshot_connection, 
+TQ("worker"));
+```
+
+6. 唯一连接
+```cpp
+CONNECT(dc, error, [](const std::string& error) {
+    std::cout << "唯一错误处理器 - " << error << std::endl;
+}, sigslot::connection_type::queued_connection | sigslot::connection_type::unique_connection,
+TQ("worker"));
+```
+
+#### 5. 信号发射
+```cpp
+// 发射无参数信号
+EMIT(started);
+
+// 发射单参数信号
+auto deviceInfo = std::make_shared<DeviceInfo>();
+deviceInfo->deviceName = "麦克风";
+EMIT(devicePlugged, deviceInfo);
+
+// 发射多参数信号
+EMIT(progress, 1, 3, "处理中...");
+
+// 发射自定义类型信号
+VideoFrame frame{640, 480, std::vector<uint8_t>(640*480, 0)};
+EMIT(frameReceived, frame);
+```
+
+#### 6. 连接管理示例
+
+1. 使用连接对象
+```cpp
+auto conn = CONNECT(dc, progress, [](int current, int total, const std::string& message) {
+    std::cout << "进度 " << current << "/" << total << std::endl;
+}, sigslot::connection_type::queued_connection, TQ("worker"));
+
+conn.disconnect();  // 手动断开连接
+```
+
+2. 使用作用域连接
+```cpp
+{
+    sigslot::scoped_connection conn = CONNECT(dc, error, [](const std::string& error) {
+        std::cout << "作用域错误处理器：" << error << std::endl;
+    }, sigslot::connection_type::queued_connection, TQ("worker"));
+    
+    // 连接仅在此作用域内有效
+} // 在此自动断开连接
+```
+
+3. 使用DISCONNECT宏
+```cpp
+DISCONNECT(dc, started, nullptr, nullptr);  // 断开'started'信号的所有槽连接
+``` 
+
+## 更多示例
+
+如需了解更详细的示例和使用场景，可以参考以下文件：
+
+- `examples.cpp`：展示了全面的使用方法，包括：
+  - 不同的连接类型（直接连接、队列连接、自动连接、阻塞连接）
+  - 各种信号槽模式（成员函数、Lambda表达式、全局函数）
+  - 连接管理方法
+  - 线程安全的信号发射
+  - 任务队列集成
+  - 线程ID跟踪调试
+
+- `test_signal_slot.cpp`：包含了单元测试，展示了：
+  - 基本的信号槽功能
+  - 连接类型行为
+  - 单次连接和唯一连接
+  - 连接管理
+  - 断开连接场景
+  - 线程安全方面
+  - 内存管理案例
+
+这些文件提供了实用的示例和测试用例，可以帮助你理解如何在自己的项目中有效地使用这个库。 

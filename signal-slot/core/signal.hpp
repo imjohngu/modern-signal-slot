@@ -909,12 +909,11 @@ namespace sigslot {
             }
 
             inline bool is_current() {
-                assert(this->m_queue);
-                auto is_current = false;
-                if (this->m_queue->IsCurrent()) {
-                    is_current = true;
+                // If no queue is specified, it is assumed that the current thread is directly calling the
+                if (!this->m_queue) {
+                    return true;
                 }
-                return is_current;
+                return this->m_queue->IsCurrent();
             }
 
             uint32_t type() {

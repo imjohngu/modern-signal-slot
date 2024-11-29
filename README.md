@@ -103,9 +103,14 @@ enum connection_type {
 };
 ```
 
-- `auto_connection`: The system automatically chooses between direct and queued connection based on the thread context:
-  - If the slot is in the same thread as the signal emission, uses direct connection
-  - If the slot is in a different thread, uses queued connection
+- `auto_connection`: The system automatically chooses between direct and queued connection:
+  - If no task queue is specified (nullptr or not specified):
+    * Always uses direct connection
+    * Executes in the emitting thread
+  - If a task queue is specified:
+    * Uses direct connection if emitting from the queue's thread
+    * Uses queued connection if emitting from other threads
+    * Executes in the task queue's thread when using queued connection
 
 - `direct_connection`: The slot is executed synchronously in the thread that emits the signal. This is the fastest option but may block the emitting thread.
 

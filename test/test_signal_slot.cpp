@@ -411,3 +411,208 @@ TEST_F(SignalSlotTest, ConnectionBlocking) {
     EXPECT_TRUE(receiver->singleParamCalled);
     EXPECT_EQ(receiver->lastValue, 43);
 } 
+
+// Test connection types behavior
+class ConnectionTypesTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        TQMgr->create({"worker"});
+    }
+
+    void TearDown() override {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    struct TestSignalEmitter {
+        SIGNAL(testSignal, int);
+    };
+
+    struct TestSlotReceiver {
+        void onSignal(int value) {
+            executionThreadId = std::this_thread::get_id();
+            lastValue = value;
+            callCount++;
+            // Add delay to test blocking behavior
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            executed = true;
+        }
+
+        void reset() {
+            executed = false;
+            callCount = 0;
+            lastValue = 0;
+            executionThreadId = std::thread::id();
+        }
+
+        bool executed = false;
+        int callCount = 0;
+        int lastValue = 0;
+        std::thread::id executionThreadId;
+    };
+};
+
+// Test auto_connection behavior
+TEST_F(ConnectionTypesTest, AutoConnection) {
+    auto emitter = std::make_shared<TestSignalEmitter>();
+    auto receiver = std::make_shared<TestSlotReceiver>();
+    auto mainThreadId = std::this_thread::get_id();
+
+    // Case 1: No queue specified - should always use direct connection
+    CONNECT(emitter, testSignal, receiver.get(), SLOT(TestSlotReceiver::onSignal),
+            sigslot::connection_type::auto_connection);
+    EMIT(emitter->testSignal, 1);
+    EXPECT_TRUE(receiver->executed);
+    EXPECT_EQ(receiver->executionThreadId, mainThreadId); // Should execute in emitting thread
+
+    // Case 2: With queue, emit from non-queue thread
+    receiver->reset();
+    CONNECT(emitter, testSignal, receiver.get(), SLOT(TestSlotReceiver::onSignal),
+            sigslot::connection_type::auto_connection, TQ("worker"));
+    EMIT(emitter->testSignal, 2);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_TRUE(receiver->executed);
+    EXPECT_NE(receiver->executionThreadId, mainThreadId); // Should execute in worker thread
+
+    // Case 3: With queue, emit from queue thread
+    receiver->reset();
+    auto workerThreadId = std::thread::id();
+    TQ("worker")->PostTask([&]() {
+        workerThreadId = std::this_thread::get_id();
+        EMIT(emitter->testSignal, 3);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_TRUE(receiver->executed);
+    EXPECT_EQ(receiver->executionThreadId, workerThreadId); // Should execute directly in worker thread
+}
+
+// Test direct_connection behavior
+TEST_F(ConnectionTypesTest, DirectConnection) {
+    auto emitter = std::make_shared<TestSignalEmitter>();
+    auto receiver = std::make_shared<TestSlotReceiver>();
+    auto mainThreadId = std::this_thread::get_id();
+
+    CONNECT(emitter, testSignal, receiver.get(), SLOT(TestSlotReceiver::onSignal),
+            sigslot::connection_type::direct_connection, TQ("worker"));
+
+    // Emit from main thread
+    EMIT(emitter->testSignal, 1);
+    EXPECT_TRUE(receiver->executed);
+    EXPECT_EQ(receiver->executionThreadId, mainThreadId); // Should always execute in emitting thread
+
+    // Reset and emit from another thread
+    receiver->reset();
+    std::thread([emitter, &receiver]() {
+        auto threadId = std::this_thread::get_id();
+        EMIT(emitter->testSignal, 2);
+        EXPECT_EQ(receiver->executionThreadId, threadId); // Should execute in emitting thread
+    }).join();
+}
+
+// Test queued_connection behavior
+TEST_F(ConnectionTypesTest, QueuedConnection) {
+    auto emitter = std::make_shared<TestSignalEmitter>();
+    auto receiver = std::make_shared<TestSlotReceiver>();
+    auto mainThreadId = std::this_thread::get_id();
+
+    CONNECT(emitter, testSignal, receiver.get(), SLOT(TestSlotReceiver::onSignal),
+            sigslot::connection_type::queued_connection, TQ("worker"));
+
+    // Emit and verify asynchronous execution
+    EMIT(emitter->testSignal, 1);
+    EXPECT_FALSE(receiver->executed); // Should not execute immediately
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_TRUE(receiver->executed);
+    EXPECT_NE(receiver->executionThreadId, mainThreadId); // Should execute in worker thread
+}
+
+// Test blocking_queued_connection behavior
+TEST_F(ConnectionTypesTest, BlockingQueuedConnection) {
+    auto emitter = std::make_shared<TestSignalEmitter>();
+    auto receiver = std::make_shared<TestSlotReceiver>();
+    auto mainThreadId = std::this_thread::get_id();
+    auto startTime = std::chrono::steady_clock::now();
+
+    CONNECT(emitter, testSignal, receiver.get(), SLOT(TestSlotReceiver::onSignal),
+            sigslot::connection_type::blocking_queued_connection, TQ("worker"));
+
+    // Emit and verify blocking behavior
+    EMIT(emitter->testSignal, 1);
+    auto duration = std::chrono::steady_clock::now() - startTime;
+    EXPECT_TRUE(receiver->executed);
+    EXPECT_NE(receiver->executionThreadId, mainThreadId); // Should execute in worker thread
+    EXPECT_GE(std::chrono::duration_cast<std::chrono::milliseconds>(duration).count(), 50); // Should block
+}
+
+// Test unique_connection behavior
+TEST_F(ConnectionTypesTest, UniqueConnection) {
+    auto emitter = std::make_shared<TestSignalEmitter>();
+    auto receiver = std::make_shared<TestSlotReceiver>();
+
+    // First connection
+    CONNECT(emitter, testSignal, receiver.get(), SLOT(TestSlotReceiver::onSignal),
+            sigslot::connection_type::queued_connection | sigslot::connection_type::unique_connection,
+            TQ("worker"));
+
+    // Try duplicate connection
+    CONNECT(emitter, testSignal, receiver.get(), SLOT(TestSlotReceiver::onSignal),
+            sigslot::connection_type::queued_connection | sigslot::connection_type::unique_connection,
+            TQ("worker"));
+
+    EMIT(emitter->testSignal, 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_EQ(receiver->callCount, 1); // Should only be called once
+}
+
+// Test singleshot_connection behavior
+TEST_F(ConnectionTypesTest, SingleshotConnection) {
+    auto emitter = std::make_shared<TestSignalEmitter>();
+    auto receiver = std::make_shared<TestSlotReceiver>();
+
+    CONNECT(emitter, testSignal, receiver.get(), SLOT(TestSlotReceiver::onSignal),
+            sigslot::connection_type::queued_connection | sigslot::connection_type::singleshot_connection,
+            TQ("worker"));
+
+    // First emission
+    EMIT(emitter->testSignal, 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_TRUE(receiver->executed);
+    EXPECT_EQ(receiver->callCount, 1);
+
+    // Second emission should not trigger the slot
+    receiver->reset();
+    EMIT(emitter->testSignal, 2);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_FALSE(receiver->executed);
+    EXPECT_EQ(receiver->callCount, 0);
+}
+
+// Test combined connection types
+TEST_F(ConnectionTypesTest, CombinedConnectionTypes) {
+    auto emitter = std::make_shared<TestSignalEmitter>();
+    auto receiver = std::make_shared<TestSlotReceiver>();
+
+    // Combine unique, singleshot, and queued connection
+    CONNECT(emitter, testSignal, receiver.get(), SLOT(TestSlotReceiver::onSignal),
+            sigslot::connection_type::queued_connection | 
+            sigslot::connection_type::unique_connection |
+            sigslot::connection_type::singleshot_connection,
+            TQ("worker"));
+
+    // Try duplicate connection
+    CONNECT(emitter, testSignal, receiver.get(), SLOT(TestSlotReceiver::onSignal),
+            sigslot::connection_type::queued_connection | 
+            sigslot::connection_type::unique_connection |
+            sigslot::connection_type::singleshot_connection,
+            TQ("worker"));
+
+    // First emission
+    EMIT(emitter->testSignal, 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_EQ(receiver->callCount, 1); // Should be called once
+
+    // Second emission should not trigger due to singleshot
+    receiver->reset();
+    EMIT(emitter->testSignal, 2);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_EQ(receiver->callCount, 0); // Should not be called
+} 

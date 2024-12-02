@@ -49,9 +49,11 @@ endif()
 enable_testing()
 
 # Add test executable
+file(GLOB TEST_FILES "test/*.cpp")
+
 add_executable(signal_slot_test 
     ${SRC_FILES}
-    test/test_signal_slot.cpp
+    ${TEST_FILES}
 )
 
 target_link_libraries(signal_slot_test

@@ -16,7 +16,6 @@ struct VideoFrame {
     std::vector<uint8_t> data;
 };
 
-// 在文件开头添加辅助函数
 namespace {
     std::string get_thread_id() {
         std::stringstream ss;

@@ -3,49 +3,63 @@
 #include "./core/signal.hpp"
 #include "./signal-slot/core/task_queue.hpp"
 
-// Macro for signal declaration
-#define SIGNAL(name, ...) \
-    sigslot::signal<__VA_ARGS__> name;
+namespace sigslot {
 
-// Macro for slot declaration
-#define SLOT(name) &name
+// Signal class template
+template<typename... Args>
+class Signal {
+private:
+    signal<Args...> sig;
 
-// For member functions with type and queue
-#define CONNECT_IMPL6(sender, signal, receiver, slot, type, queue) \
-    (sender)->signal.connect(receiver, slot, type, queue)
+public:
+    Signal() = default;
+    
+    // Expose internal signal's operations
+    template<typename... EmitArgs>
+    void operator()(EmitArgs&&... args) {
+        sig(std::forward<EmitArgs>(args)...);
+    }
 
-// For member functions without type and queue
-#define CONNECT_IMPL4(sender, signal, receiver, slot) \
-    (sender)->signal.connect(receiver, slot, sigslot::connection_type::direct_connection, nullptr)
+    void disconnect_all() { sig.disconnect_all(); }
+    
+    // Make internal signal accessible to free functions
+    signal<Args...>& get_internal() { return sig; }
+    const signal<Args...>& get_internal() const { return sig; }
+};
 
-// For lambdas/global functions with type and queue
-#define CONNECT_IMPL5(sender, signal, slot, type, queue) \
-    (sender)->signal.connect(slot, type, queue)
+// Global functions for connection management
+// For member functions
+template<typename Sender, typename Signal, typename Receiver, typename Slot>
+connection connect(Sender* sender, Signal& signal, Receiver* receiver, Slot slot,
+                  uint32_t type = connection_type::direct_connection,
+                  core::TaskQueue* queue = nullptr) {
+    return signal.get_internal().connect(receiver, slot, type, queue);
+}
 
-// For lambdas/global functions without type and queue
-#define CONNECT_IMPL3(sender, signal, slot) \
-    (sender)->signal.connect(slot, sigslot::connection_type::direct_connection, nullptr)
+// For lambdas and free functions
+template<typename Sender, typename Signal, typename Callable>
+connection connect(Sender* sender, Signal& signal, Callable&& callable,
+                  uint32_t type = connection_type::direct_connection,
+                  core::TaskQueue* queue = nullptr) {
+    return signal.get_internal().connect(std::forward<Callable>(callable), type, queue);
+}
 
-// Helper macro to count arguments
-#define COUNT_ARGS(...) COUNT_ARGS_HELPER(__VA_ARGS__, 6, 5, 4, 3, 2, 1)
-#define COUNT_ARGS_HELPER(_1, _2, _3, _4, _5, _6, N, ...) N
+// Global function for signal emission
+template<typename Signal, typename... Args>
+void emit(Signal& signal, Args&&... args) {
+    signal(std::forward<Args>(args)...);
+}
 
-// Helper macro to detect if argument is a receiver
-#define IS_MEMBER_FUNC(...) \
-    IS_MEMBER_FUNC_HELPER(__VA_ARGS__, 0, 0, 0, 0, 0)
-#define IS_MEMBER_FUNC_HELPER(_1, _2, _3, _4, _5, _6, N, ...) N
+// Global functions for disconnection
+template<typename Sender, typename Signal, typename Receiver, typename Slot>
+void disconnect(Sender* sender, Signal& signal, Receiver* receiver, Slot slot) {
+    signal.get_internal().disconnect(receiver, slot);
+}
 
-// Choose the appropriate implementation based on argument count and type
-#define CONNECT(...) \
-    CONNECT_CHOOSER(COUNT_ARGS(__VA_ARGS__))(__VA_ARGS__)
+template<typename Signal>
+void disconnect_all(Signal& signal) {
+    signal.disconnect_all();
+}
 
-#define CONNECT_CHOOSER(N) CONNECT_CHOOSER_(N)
-#define CONNECT_CHOOSER_(N) CONNECT_IMPL ## N
-
-// Macro for disconnecting signal and slot
-#define DISCONNECT(sender, signal, receiver, slot) \
-    (sender)->signal.disconnect(receiver, slot)
-
-// Macro for emitting signal
-#define EMIT(signal, ...) signal(__VA_ARGS__)
+} // namespace sigslot
  

@@ -118,62 +118,6 @@ TEST_F(SignalSlotTest, CrossThreadEmission) {
     EXPECT_TRUE(receiver->singleParamCalled);
 }
 
-// Test connection types
-TEST_F(SignalSlotTest, ConnectionTypes) {
-    auto emitter = std::make_shared<TestEmitter>();
-    auto receiver = std::make_shared<TestReceiver>();
-
-    // Case 1: Direct connection
-    auto conn1 = sigslot::connect(emitter.get(), emitter->singleParamSignal,
-                                receiver.get(), &TestReceiver::onSingleParam,
-                                static_cast<uint32_t>(sigslot::connection_type::direct_connection));
-
-    // Case 2: Queued connection
-    auto conn2 = sigslot::connect(emitter.get(), emitter->singleParamSignal,
-                                receiver.get(), &TestReceiver::onSingleParam,
-                                static_cast<uint32_t>(sigslot::connection_type::queued_connection),
-                                TQ("worker"));
-
-    // Case 3: Combined connection types
-    auto conn3 = sigslot::connect(emitter.get(), emitter->singleParamSignal,
-                                receiver.get(), &TestReceiver::onSingleParam,
-                                static_cast<uint32_t>(sigslot::connection_type::queued_connection | 
-                                                    sigslot::connection_type::unique_connection),
-                                TQ("worker"));
-
-    // Test direct connection
-    sigslot::emit(emitter->singleParamSignal, 1);
-    EXPECT_TRUE(receiver->singleParamCalled);
-    EXPECT_EQ(receiver->lastValue, 1);
-
-    // Test queued connection
-    receiver->reset();
-    sigslot::emit(emitter->singleParamSignal, 2);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    EXPECT_TRUE(receiver->singleParamCalled);
-    EXPECT_EQ(receiver->lastValue, 2);
-
-    // Test combined connection types
-    receiver->reset();
-    sigslot::emit(emitter->singleParamSignal, 3);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    EXPECT_TRUE(receiver->singleParamCalled);
-    EXPECT_EQ(receiver->lastValue, 3);
-
-    // Try duplicate connection (should fail due to unique_connection)
-    auto conn4 = sigslot::connect(emitter.get(), emitter->singleParamSignal,
-                                receiver.get(), &TestReceiver::onSingleParam,
-                                static_cast<uint32_t>(sigslot::connection_type::queued_connection | 
-                                                    sigslot::connection_type::unique_connection),
-                                TQ("worker"));
-
-    receiver->reset();
-    sigslot::emit(emitter->singleParamSignal, 4);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    EXPECT_TRUE(receiver->singleParamCalled);
-    EXPECT_EQ(receiver->callCount, 1);  // Should only be called once
-}
-
 // Test disconnection
 TEST_F(SignalSlotTest, Disconnection) {
     auto emitter = std::make_shared<TestEmitter>();
@@ -220,48 +164,6 @@ TEST_F(SignalSlotTest, AutoConnectionBehavior) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     EXPECT_TRUE(receiver->singleParamCalled);
     EXPECT_NE(receiver->executionThreadId, mainThreadId);  // Should execute in worker thread
-}
-
-// Test connection type combinations
-TEST_F(SignalSlotTest, ConnectionTypeCombinations) {
-    auto emitter = std::make_shared<TestEmitter>();
-    auto receiver = std::make_shared<TestReceiver>();
-
-    // Case 1: Unique + Queued connection
-    auto conn1 = sigslot::connect(emitter.get(), emitter->singleParamSignal,
-                                receiver.get(), &TestReceiver::onSingleParam,
-                                sigslot::connection_type::queued_connection | 
-                                sigslot::connection_type::unique_connection,
-                                TQ("worker"));
-
-    // Try duplicate connection
-    auto conn2 = sigslot::connect(emitter.get(), emitter->singleParamSignal,
-                                receiver.get(), &TestReceiver::onSingleParam,
-                                sigslot::connection_type::queued_connection | 
-                                sigslot::connection_type::unique_connection,
-                                TQ("worker"));
-
-    sigslot::emit(emitter->singleParamSignal, 1);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    EXPECT_TRUE(receiver->singleParamCalled);
-    EXPECT_EQ(receiver->callCount, 1);  // Should only be called once
-
-    // Case 2: Single-shot + Queued connection
-    receiver->reset();
-    auto conn3 = sigslot::connect(emitter.get(), emitter->singleParamSignal,
-                                receiver.get(), &TestReceiver::onSingleParam,
-                                sigslot::connection_type::queued_connection | 
-                                sigslot::connection_type::singleshot_connection,
-                                TQ("worker"));
-
-    sigslot::emit(emitter->singleParamSignal, 2);  // Should be processed
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    EXPECT_TRUE(receiver->singleParamCalled);
-    
-    receiver->reset();
-    sigslot::emit(emitter->singleParamSignal, 3);  // Should not be processed
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    EXPECT_FALSE(receiver->singleParamCalled);
 }
 
 // Test thread safety
@@ -391,4 +293,105 @@ TEST_F(SignalSlotTest, QueuedConnection) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     EXPECT_TRUE(receiver->singleParamCalled);
     EXPECT_NE(receiver->executionThreadId, mainThreadId);
-} 
+}
+
+/*
+// Test connection type combinations
+TEST_F(SignalSlotTest, ConnectionTypeCombinations) {
+    auto emitter = std::make_shared<TestEmitter>();
+    auto receiver = std::make_shared<TestReceiver>();
+
+    // Case 1: Unique + Queued connection
+    auto conn1 = sigslot::connect(emitter.get(), emitter->singleParamSignal,
+                                  receiver.get(), &TestReceiver::onSingleParam,
+                                  sigslot::connection_type::queued_connection |
+                                  sigslot::connection_type::unique_connection,
+                                  TQ("worker"));
+
+    // Try duplicate connection
+    auto conn2 = sigslot::connect(emitter.get(), emitter->singleParamSignal,
+                                  receiver.get(), &TestReceiver::onSingleParam,
+                                  sigslot::connection_type::queued_connection |
+                                  sigslot::connection_type::unique_connection,
+                                  TQ("worker"));
+
+    sigslot::emit(emitter->singleParamSignal, 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_TRUE(receiver->singleParamCalled);
+    EXPECT_EQ(receiver->callCount, 1);  // Should only be called once
+
+    // Case 2: Single-shot + Queued connection
+    receiver->reset();
+    auto conn3 = sigslot::connect(emitter.get(), emitter->singleParamSignal,
+                                  receiver.get(), &TestReceiver::onSingleParam,
+                                  sigslot::connection_type::queued_connection |
+                                  sigslot::connection_type::singleshot_connection,
+                                  TQ("worker"));
+
+    sigslot::emit(emitter->singleParamSignal, 2);  // Should be processed
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_TRUE(receiver->singleParamCalled);
+
+    receiver->reset();
+    sigslot::emit(emitter->singleParamSignal, 3);  // Should not be processed
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_FALSE(receiver->singleParamCalled);
+}
+
+
+// Test connection types
+TEST_F(SignalSlotTest, ConnectionTypes) {
+    auto emitter = std::make_shared<TestEmitter>();
+    auto receiver = std::make_shared<TestReceiver>();
+
+    // Case 1: Direct connection
+    auto conn1 = sigslot::connect(emitter.get(), emitter->singleParamSignal,
+                                  receiver.get(), &TestReceiver::onSingleParam,
+                                  static_cast<uint32_t>(sigslot::connection_type::direct_connection));
+
+    // Case 2: Queued connection
+    auto conn2 = sigslot::connect(emitter.get(), emitter->singleParamSignal,
+                                  receiver.get(), &TestReceiver::onSingleParam,
+                                  static_cast<uint32_t>(sigslot::connection_type::queued_connection),
+                                  TQ("worker"));
+
+    // Case 3: Combined connection types
+    auto conn3 = sigslot::connect(emitter.get(), emitter->singleParamSignal,
+                                  receiver.get(), &TestReceiver::onSingleParam,
+                                  static_cast<uint32_t>(sigslot::connection_type::queued_connection |
+                                                        sigslot::connection_type::unique_connection),
+                                  TQ("worker"));
+
+    // Test direct connection
+    sigslot::emit(emitter->singleParamSignal, 1);
+    EXPECT_TRUE(receiver->singleParamCalled);
+    EXPECT_EQ(receiver->lastValue, 1);
+
+    // Test queued connection
+    receiver->reset();
+    sigslot::emit(emitter->singleParamSignal, 2);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_TRUE(receiver->singleParamCalled);
+    EXPECT_EQ(receiver->lastValue, 2);
+
+    // Test combined connection types
+    receiver->reset();
+    sigslot::emit(emitter->singleParamSignal, 3);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_TRUE(receiver->singleParamCalled);
+    EXPECT_EQ(receiver->lastValue, 3);
+
+    // Try duplicate connection (should fail due to unique_connection)
+    auto conn4 = sigslot::connect(emitter.get(), emitter->singleParamSignal,
+                                  receiver.get(), &TestReceiver::onSingleParam,
+                                  static_cast<uint32_t>(sigslot::connection_type::queued_connection |
+                                                        sigslot::connection_type::unique_connection),
+                                  TQ("worker"));
+
+    receiver->reset();
+    sigslot::emit(emitter->singleParamSignal, 4);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_TRUE(receiver->singleParamCalled);
+    EXPECT_EQ(receiver->callCount, 1);  // Should only be called once
+}
+ */

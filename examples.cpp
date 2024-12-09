@@ -181,6 +181,8 @@ void testSignalSlot() {
 
     // Wait for queued signals
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    std::cout << "=== Testing Signal-Slot Examples ===\n" << std::endl;
 }
 
 int main() {
